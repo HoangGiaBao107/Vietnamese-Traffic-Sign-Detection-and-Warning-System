@@ -1,7 +1,8 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AUDIO_DIR = os.path.join(BASE_DIR, "Warning sound")
+# Đổi tên thư mục bỏ khoảng trắng để tránh lỗi trên môi trường Linux
+AUDIO_DIR = os.path.join(BASE_DIR, "Warning_sound")
 
 MODEL_PATH = os.path.join(BASE_DIR, "best.onnx")
 BG_IMAGE_PATH = "background.jpg"
@@ -89,4 +90,4 @@ ENGLISH_SUBTITLES = {
 }
 
 CONFIDENCE_THRESHOLD = 0.50  
-COOLDOWN_SECONDS = 10
+COOLDOWN_SECONDS = 15
