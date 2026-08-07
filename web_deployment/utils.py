@@ -13,10 +13,6 @@ def get_base64_of_bin_file(filename):
     return ""
 
 def inject_js_audio_manager():
-    """
-    Tiêm Javascript Audio Manager vào DOM chính của Streamlit.
-    Hệ thống này lắng nghe sự kiện onended để phát âm thanh mượt mà tuần tự.
-    """
     js_code = """
     <script>
     const doc = window.parent.document;
@@ -24,26 +20,44 @@ def inject_js_audio_manager():
         const script = doc.createElement('script');
         script.id = 'custom-audio-manager';
         script.innerHTML = `
-            window.audioQueue = [];
-            window.isPlaying = false;
-            window.playNextAudio = function() {
-                if (window.audioQueue.length === 0) {
-                    window.isPlaying = false;
+            window.parent.audioQueue = window.parent.audioQueue || [];
+            window.parent.isAudioPlaying = window.parent.isAudioPlaying || false;
+
+            window.parent.playNextAudio = function() {
+                if (window.parent.audioQueue.length === 0) {
+                    window.parent.isAudioPlaying = false;
                     return;
                 }
-                window.isPlaying = true;
-                let src = window.audioQueue.shift();
-                let audio = new Audio(src);
-                audio.onended = () => { window.playNextAudio(); };
-                audio.play().catch(e => { console.error("Audio playback blocked:", e); window.playNextAudio(); });
-            };
-            window.enqueueAudioBatch = function(srcArray) {
-                if (!srcArray || srcArray.length === 0) return;
-                for(let i=0; i<srcArray.length; i++) {
-                    window.audioQueue.push(srcArray[i]);
+                window.parent.isAudioPlaying = true;
+                let src = window.parent.audioQueue.shift();
+                
+                // Dừng âm thanh cũ (nếu có) trước khi nạp âm thanh mới
+                if (window.parent.currentAudio) {
+                    window.parent.currentAudio.pause();
                 }
-                if (!window.isPlaying) {
-                    window.playNextAudio();
+                
+                window.parent.currentAudio = new Audio(src);
+                window.parent.currentAudio.onended = function() {
+                    window.parent.playNextAudio(); // Kích hoạt file tiếp theo
+                };
+                window.parent.currentAudio.onerror = function(e) {
+                    console.error("Lỗi phát âm thanh:", e);
+                    window.parent.playNextAudio(); // Bỏ qua file lỗi, phát tiếp
+                };
+                
+                let playPromise = window.parent.currentAudio.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(function(e) {
+                        console.error("Trình duyệt chặn autoplay:", e);
+                        window.parent.playNextAudio();
+                    });
+                }
+            };
+
+            window.parent.enqueueAudio = function(src) {
+                window.parent.audioQueue.push(src);
+                if (!window.parent.isAudioPlaying) {
+                    window.parent.playNextAudio();
                 }
             };
         `;
