@@ -39,7 +39,7 @@ def process_frame(frame, show_fps, start_time, is_image=False):
         # FPS Optimization: Bỏ qua frame Inference, chạy Model ở ~10 FPS, Render vẽ đồ họa ở 30 FPS
         if is_image or (current_time - _global_state['inference_cache']['last_time'] >= 0.1):
             # Tối ưu RAM: model(frame) thay vì model.predict(frame) + giảm imgsz xuống 416
-            results = yolo_model(frame, imgsz=416, conf=CONFIDENCE_THRESHOLD, verbose=False)
+            results = yolo_model(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
             
             _global_state['inference_cache']['boxes'] = results[0].boxes
             _global_state['inference_cache']['last_time'] = current_time
