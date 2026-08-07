@@ -27,7 +27,19 @@ _global_state = {
     'last_frame_time': 0,
     'smooth_fps': 0.0
 }
+def is_overlap(box1, box2):
+    """
+    Kiểm tra xem 2 khung nhãn (x1, y1, x2, y2) có bị đè lên nhau không.
+    """
+    b1_x1, b1_y1, b1_x2, b1_y2 = box1
+    b2_x1, b2_y1, b2_x2, b2_y2 = box2
 
+    if b1_x2 <= b2_x1 or b2_x2 <= b1_x1:
+        return False
+    if b1_y2 <= b2_y1 or b2_y2 <= b1_y1:
+        return False
+
+    return True
 def process_frame(frame, show_fps, start_time, mode="camera", current_video_time=0.0):
     if yolo_model is None:
         cv2.putText(frame, "Error: Model not found!", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
