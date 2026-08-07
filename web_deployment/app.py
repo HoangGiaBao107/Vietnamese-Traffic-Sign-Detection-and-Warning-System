@@ -3,6 +3,7 @@ import cv2
 import time
 import numpy as np
 import tempfile
+import queue
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 from utils import inject_custom_css, trigger_audio_queue
@@ -93,32 +94,52 @@ def render_camera():
         change_page('home')
         
     st.header("Luồng Camera Trực tiếp / Real-time Camera Feed")
-    st.info("💡 Trên Cloud, ứng dụng dùng WebRTC để mở luồng video. Nhấn nút 'Start' bên dưới luồng camera để bắt đầu cấp quyền truy cập Camera.")
+    st.info("💡 Hệ thống sử dụng WebRTC. Nhấn nút 'START' bên dưới để cấp quyền mở Camera.")
 
     col_cam, col_opt = st.columns([3, 1])
     
     with col_opt:
         show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_cam")
+        enable_audio = st.checkbox("🔔 Bật cảnh báo âm thanh", value=True)
+        audio_ph = st.empty()
 
     with col_cam:
+        # 1. Tạo hàng đợi (Queue) chuyên biệt để giao tiếp giữa luồng WebRTC và luồng Streamlit UI
+        audio_queue = queue.Queue()
+
         def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-            # Lấy luồng ảnh từ trình duyệt web
             img = frame.to_ndarray(format="bgr24")
             img = cv2.resize(img, (640, 480))
             
-            # Xử lý YOLO. Lưu ý: Do webRTC chạy đa luồng, việc gọi Audio qua UI từ hàm callback bị giới hạn.
-            # Do đó audio sẽ chỉ hoạt động tốt tại trang Phân tích Video/Ảnh tĩnh.
-            processed_frame, _, _ = process_frame(img, show_fps, time.time(), is_image=False)
+            # Xử lý hình ảnh
+            processed_frame, _, audio_triggers = process_frame(img, show_fps, time.time(), is_image=False)
+            
+            # 2. Nếu phát hiện biển báo, đẩy đường dẫn âm thanh vào hàng đợi thay vì gọi trực tiếp UI
+            if audio_triggers:
+                for path in audio_triggers:
+                    audio_queue.put(path)
             
             return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
 
-        webrtc_streamer(
+        ctx = webrtc_streamer(
             key="traffic-camera",
             mode=WebRtcMode.SENDRECV,
             video_frame_callback=video_frame_callback,
             media_stream_constraints={"video": True, "audio": False},
             async_processing=True
         )
+
+    # 3. Vòng lặp chính liên tục lắng nghe hàng đợi để xuất âm thanh
+    if ctx.state.playing:
+        while True:
+            try:
+                # Đợi dữ liệu từ Queue, timeout 0.5s để không làm treo CPU
+                audio_path = audio_queue.get(timeout=0.5)
+                if enable_audio:
+                    trigger_audio_queue([audio_path], audio_ph)
+            except queue.Empty:
+                # Vòng lặp sẽ tiếp tục nếu Queue trống
+                pass
 
 def render_video():
     if st.button("🔙 Về trang chủ / Back to Home"):
@@ -128,7 +149,6 @@ def render_video():
     uploaded_video = st.file_uploader("Chọn tệp video / Choose a video file", type=['mp4', 'avi', 'mov'])
     
     if uploaded_video:
-        # Bắt buộc thao tác từ người dùng để Browser cấp quyền Autoplay Audio
         enable_audio = st.checkbox("🔔 Bật phát cảnh báo âm thanh", value=True)
         
         col_vid, col_opt = st.columns([3, 1])
@@ -188,7 +208,6 @@ def render_image():
         with st.spinner("Đang phân tích ảnh... / Analyzing image..."):
             processed_frame, box_count, audio_triggers = process_frame(frame, show_fps=False, start_time=time.time(), is_image=True)
             
-            # Kích hoạt âm thanh
             trigger_audio_queue(audio_triggers, audio_ph)
             
             st.image(processed_frame, channels="BGR", width=800)
