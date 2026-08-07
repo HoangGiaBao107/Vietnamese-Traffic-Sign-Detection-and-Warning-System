@@ -1,7 +1,7 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AUDIO_DIR = os.path.join(BASE_DIR, "Warning sound")
+AUDIO_DIR = os.path.join(BASE_DIR, "Warning_sound")
 
 MODEL_PATH = os.path.join(BASE_DIR, "best.onnx")
 BG_IMAGE_PATH = "background.jpg"
