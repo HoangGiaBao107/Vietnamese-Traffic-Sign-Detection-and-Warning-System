@@ -1,7 +1,9 @@
 import streamlit as st
 import base64
 import os
+import streamlit.components.v1 as components
 from config import BASE_DIR, BG_IMAGE_PATH
+import json
 
 def get_base64_of_bin_file(filename):
     filepath = os.path.join(BASE_DIR, filename)
@@ -10,31 +12,66 @@ def get_base64_of_bin_file(filename):
             return base64.b64encode(f.read()).decode()
     return ""
 
+def inject_js_audio_manager():
+    """
+    Tiêm Javascript Audio Manager vào DOM chính của Streamlit.
+    Hệ thống này lắng nghe sự kiện onended để phát âm thanh mượt mà tuần tự.
+    """
+    js_code = """
+    <script>
+    const doc = window.parent.document;
+    if (!doc.getElementById('custom-audio-manager')) {
+        const script = doc.createElement('script');
+        script.id = 'custom-audio-manager';
+        script.innerHTML = `
+            window.audioQueue = [];
+            window.isPlaying = false;
+            window.playNextAudio = function() {
+                if (window.audioQueue.length === 0) {
+                    window.isPlaying = false;
+                    return;
+                }
+                window.isPlaying = true;
+                let src = window.audioQueue.shift();
+                let audio = new Audio(src);
+                audio.onended = () => { window.playNextAudio(); };
+                audio.play().catch(e => { console.error("Audio playback blocked:", e); window.playNextAudio(); });
+            };
+            window.enqueueAudioBatch = function(srcArray) {
+                if (!srcArray || srcArray.length === 0) return;
+                for(let i=0; i<srcArray.length; i++) {
+                    window.audioQueue.push(srcArray[i]);
+                }
+                if (!window.isPlaying) {
+                    window.playNextAudio();
+                }
+            };
+        `;
+        doc.head.appendChild(script);
+    }
+    </script>
+    """
+    components.html(js_code, height=0, width=0)
+
 def trigger_audio_queue(audio_paths, placeholder):
     """
-    Phát âm thanh trực tiếp bằng thẻ HTML5 thay vì phụ thuộc JS window.parent.
-    Tránh lỗi iframe cross-origin trên Streamlit Share.
+    Đẩy mảng âm thanh Base64 sang Javascript Queue thay vì phát từng file HTML.
     """
     if not audio_paths:
         return
         
-    # Lấy file âm thanh đầu tiên để phát
-    path = audio_paths[0]
-    
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-            
-            # Sử dụng thẻ audio HTML5 ẩn với tính năng autoplay
-            audio_html = f"""
-            <audio autoplay style="display:none;">
-                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            </audio>
-            """
-            # Render trực tiếp vào UI 
-            placeholder.markdown(audio_html, unsafe_allow_html=True)
-    else:
-        print(f"Không tìm thấy tệp âm thanh: {path}")
+    b64_list = []
+    for path in audio_paths:
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+                b64_list.append(f"data:audio/mp3;base64,{b64}")
+                
+    if b64_list:
+        js_array = json.dumps(b64_list)
+        script = f"<script>window.parent.enqueueAudioBatch({js_array});</script>"
+        with placeholder:
+            components.html(script, height=0, width=0)
 
 def inject_custom_css():
     bg_base64 = get_base64_of_bin_file(BG_IMAGE_PATH)
