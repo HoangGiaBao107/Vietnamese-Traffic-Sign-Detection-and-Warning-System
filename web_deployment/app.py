@@ -270,3 +270,12 @@ def render_image():
             else:
                 st.success(f"Phân tích hoàn tất! Phát hiện chính xác {box_count} biển báo. / Analysis complete!")
 
+
+if st.session_state.current_page == 'home':
+    render_home()
+elif st.session_state.current_page == 'camera':
+    render_camera()
+elif st.session_state.current_page == 'video':
+    render_video()
+elif st.session_state.current_page == 'image':
+    render_image()
