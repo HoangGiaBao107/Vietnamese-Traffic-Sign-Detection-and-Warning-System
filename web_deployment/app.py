@@ -44,24 +44,8 @@ def render_home():
         """, 
         unsafe_allow_html=True
     )
-
-    col1, col2, col3 = st.columns(3, gap="large")
+    col2, col3 = st.columns(2, gap="super large")
     card_style = "height: 280px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 10px;"
-
-    with col1:
-        st.markdown(
-            f"""
-            <div class='card' style='{card_style}'>
-                <div style='font-size: 4.5rem; margin-bottom: 10px; line-height: 1;'>📸</div>
-                <div style='font-size: 1.6rem; font-weight: bold; margin-bottom: 8px;'>
-                    Camera Trực tiếp<br><span style='font-size: 0.65em; font-weight: normal;'>Real-time Camera</span>
-                </div>
-                <div style='font-size: 1.1rem; color: #555;'>Xử lý trên thiết bị / Edge Device Processing</div>
-            </div>
-            """, unsafe_allow_html=True
-        )
-        if st.button("Mở Camera / Open Live Camera", use_container_width=True):
-            change_page('camera')
             
     with col2:
         st.markdown(
@@ -96,38 +80,6 @@ def render_home():
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 
-def render_camera():
-    if st.button("🔙 Về trang chủ / Back to Home"):
-        change_page('home')
-        
-    st.header("Luồng Camera Trực tiếp / Cloud WebRTC Camera")
-    st.warning("⚠️ Đang chạy trên Server Cloud: Hệ thống sử dụng WebRTC để lấy luồng video từ thiết bị của bạn một cách an toàn.")
-    st.info("💡 Để đảm bảo FPS luôn mượt mà và không làm sập kết nối máy chủ, âm thanh cảnh báo tạm thời được tắt ở chế độ Live Camera. Hệ thống sẽ cảnh báo trực quan bằng cách tô sáng biển báo trên màn hình.")
-
-    col_cam, col_opt = st.columns([3, 1])
-    
-    with col_opt:
-        show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_cam")
-
-    with col_cam:
-        def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-            # Nhận ảnh từ trình duyệt người dùng chuyển lên
-            img = frame.to_ndarray(format="bgr24")
-            img = cv2.resize(img, (640, 480))
-            
-            # Xử lý nhận diện bằng YOLO, cố tình bỏ qua mảng audio_triggers để không block WebRTC
-            processed_frame, _, _ = process_frame(img, show_fps, time.time(), is_image=False)
-            
-            # Trả ảnh đã vẽ bounding box về lại trình duyệt
-            return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
-
-        webrtc_streamer(
-            key="traffic-camera",
-            mode=WebRtcMode.SENDRECV,
-            video_frame_callback=video_frame_callback,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True  # BẮT BUỘC bằng True để luồng video không bị nghẽn
-        )
 
 def render_video():
     if st.button("🔙 Về trang chủ / Back to Home"):
