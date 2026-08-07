@@ -3,109 +3,106 @@ import time
 import os
 import streamlit as st
 from ultralytics import YOLO
-from config import MODEL_PATH, AUDIO_PATHS, ENGLISH_SUBTITLES, CONFIDENCE_THRESHOLD, COOLDOWN_SECONDS
 
+# ==========================================
+# CẤU HÌNH & CACHE MÔ HÌNH
+# ==========================================
 @st.cache_resource
 def load_model():
-    if not os.path.exists(MODEL_PATH):
-        print(f"WARNING: Model file not found at {MODEL_PATH}")
-        return None
-    try:
-        model = YOLO(MODEL_PATH, task='detect')
-        return model
-    except Exception as e:
-        print(f"Model loading error: {e}")
-        return None
+    # SỬA DÒNG NÀY: Trỏ đúng vào tên file weights YOLOv11 của bạn (ví dụ: 'best.pt')
+    model = YOLO('best.pt') 
+    return model
 
-yolo_model = load_model()
+# Thư mục chứa file âm thanh (Ví dụ: 'audios/Cam_Di_Nguoc_Chieu.mp3')
+AUDIO_DIR = "audios"
+COOLDOWN_TIME = 5.0 # Khoảng thời gian (giây) đợi trước khi phát lại cùng 1 loại cảnh báo
 
-# Bộ nhớ đệm dùng cho Camera để lưu vị trí Bounding Box khi nhảy khung hình (Frame Skipping)
-class CameraCache:
-    def __init__(self):
-        self.frame_count = 0
-        self.last_boxes = []
-        self.last_valid_count = 0
-        self.detection_timestamps = {}
-        self.last_audio_time = {}
+# ==========================================
+# HÀM PHỤ TRỢ: TRÁNH ĐÈ NHÃN TRÊN ẢNH
+# ==========================================
+def is_overlap(box1, box2):
+    """Kiểm tra xem 2 khung nhãn (x1, y1, x2, y2) có bị đè lên nhau không."""
+    b1_x1, b1_y1, b1_x2, b1_y2 = box1
+    b2_x1, b2_y1, b2_x2, b2_y2 = box2
 
-cam_cache = CameraCache()
+    if b1_x2 <= b2_x1 or b2_x2 <= b1_x1:
+        return False
+    if b1_y2 <= b2_y1 or b2_y2 <= b1_y1:
+        return False
+    return True
 
-def process_frame(frame, show_fps, start_time, is_image=False, skip_frames=3):
-    if yolo_model is None:
-        cv2.putText(frame, "Error: Model file not found!", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-        return frame, 0, []
+# ==========================================
+# HÀM XỬ LÝ CỐT LÕI
+# ==========================================
+def process_frame(frame, show_fps=False, start_time=0, mode="image", current_video_time=None):
+    model = load_model()
+    results = model(frame, verbose=False)
+    
+    processed_frame = frame.copy()
+    drawn_labels = []
+    audio_triggers = [] # Mảng chứa nhiều âm thanh để đẩy ra cho utils.py phát lần lượt
+    box_count = 0
 
-    cam_cache.frame_count += 1
-    current_time = time.time()
-    audio_triggers = []
+    # Khởi tạo bộ đếm thời gian (cooldown) để không spam âm thanh liên tục
+    if 'last_audio_time' not in st.session_state:
+        st.session_state.last_audio_time = {}
 
-    # CHỈ CHẠY YOLO MỖI `skip_frames` KHUNG HÌNH (Hoặc khi phân tích ảnh tĩnh)
-    if is_image or (cam_cache.frame_count % skip_frames == 0):
-        # imgsz=320 giúp CPU xử lý nhanh gấp 3 lần so với mặc định
-        results = yolo_model.predict(frame, conf=CONFIDENCE_THRESHOLD, imgsz=320, verbose=False)
-        
-        cached_boxes = []
-        class_confidences = {}
-        valid_boxes_count = 0
+    # Xác định thời gian mốc chuẩn hiện tại
+    if mode == "video" and current_video_time is not None:
+        current_time = current_video_time # Dùng thời gian chuẩn của video
+    else:
+        current_time = time.time() # Dùng thời gian thực tế của camera
 
-        for result in results:
-            boxes = result.boxes
+    if results:
+        for r in results:
+            boxes = r.boxes
             for box in boxes:
+                box_count += 1
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
-                cls_id = int(box.cls[0])
+                cls = int(box.cls[0])
+                label = model.names[cls] # Lấy tên biển báo
+
+                # 1. Vẽ Khung (Bounding Box)
+                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                # 2. Xử lý vị trí Nhãn (Tránh lỗi văng khi nhiều biển báo đè nhau)
+                label_text = f"{label} {conf:.2f}"
+                (text_w, text_h), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                 
-                if conf < CONFIDENCE_THRESHOLD:
-                    continue
-                    
-                valid_boxes_count += 1
-                cached_boxes.append((x1, y1, x2, y2, conf, cls_id))
+                label_x1, label_y1 = x1, y1 - 25 if y1 - 25 > 0 else y1 + 5
+                label_x2, label_y2 = label_x1 + text_w, label_y1 + text_h
                 
-                if cls_id not in class_confidences or conf > class_confidences[cls_id]:
-                    class_confidences[cls_id] = conf
+                while any(is_overlap((label_x1, label_y1, label_x2, label_y2), drawn) for drawn in drawn_labels):
+                    label_y1 -= (text_h + 5)
+                    label_y2 -= (text_h + 5)
+                    if label_y1 < 0: # Tránh văng khỏi cạnh trên màn hình
+                        label_y1 = y2 + 5
+                        label_y2 = label_y1 + text_h
+                        break
 
-        cam_cache.last_boxes = cached_boxes
-        cam_cache.last_valid_count = valid_boxes_count
-
-        # Xử lý Logic Âm thanh
-        if not is_image:
-            for cls_id in class_confidences.keys():
-                if cls_id not in cam_cache.detection_timestamps:
-                    cam_cache.detection_timestamps[cls_id] = []
-                cam_cache.detection_timestamps[cls_id].append(current_time)
+                drawn_labels.append((label_x1, label_y1, label_x2, label_y2))
                 
-            for cls_id in list(cam_cache.detection_timestamps.keys()):
-                cam_cache.detection_timestamps[cls_id] = [
-                    t for t in cam_cache.detection_timestamps[cls_id]
-                    if current_time - t <= 5.0
-                ]
+                cv2.rectangle(processed_frame, (label_x1, label_y1 - text_h - 5), (label_x1 + text_w, label_y1 + 5), (0, 255, 0), -1)
+                cv2.putText(processed_frame, label_text, (label_x1, label_y1), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
+                # 3. XỬ LÝ ÂM THANH (Thu thập để phát lần lượt)
+                # Đảm bảo tên file âm thanh khớp với tên class (VD: label là "Stop" -> "audios/Stop.mp3")
+                audio_path = os.path.join(AUDIO_DIR, f"{label}.mp3")
                 
-                # Giảm ngưỡng số lần phát hiện xuống 3 vì đã dùng Frame Skipping
-                if len(cam_cache.detection_timestamps[cls_id]) >= 3:
-                    last_time = cam_cache.last_audio_time.get(cls_id, 0)
-                    
-                    if current_time - last_time > COOLDOWN_SECONDS:
-                        if cls_id in AUDIO_PATHS:
-                            audio_triggers.append(AUDIO_PATHS[cls_id])
-                        cam_cache.last_audio_time[cls_id] = current_time
-                        
-                    cam_cache.detection_timestamps[cls_id] = []
-        else:
-            for cls_id in class_confidences.keys():
-                if cls_id in AUDIO_PATHS:
-                    audio_triggers.append(AUDIO_PATHS[cls_id])
+                # Kiểm tra xem biển báo này có đang trong thời gian "chờ" (cooldown) không
+                last_played = st.session_state.last_audio_time.get(label, -COOLDOWN_TIME)
+                if (current_time - last_played) >= COOLDOWN_TIME:
+                    if os.path.exists(audio_path):
+                        audio_triggers.append(audio_path) # NẾU THẤY NHIỀU BIỂN CÙNG LÚC SẼ THÊM VÀO ĐÂY -> [audio1, audio2]
+                        st.session_state.last_audio_time[label] = current_time
+                    else:
+                        print(f"Bỏ qua âm thanh: Không tìm thấy file {audio_path}")
 
-    # VẼ BOUNDING BOX (Dùng lại danh sách box cũ nếu rơi vào khung hình bị bỏ qua)
-    for (x1, y1, x2, y2, conf, cls_id) in cam_cache.last_boxes:
-        eng_text = ENGLISH_SUBTITLES.get(cls_id, f"Class {cls_id}")
-        display_text = f"{eng_text} ({conf*100:.1f}%)"
-        
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.rectangle(frame, (x1, max(y1 - 25, 0)), (x1 + len(display_text)*10, y1), (0, 255, 0), -1)
-        cv2.putText(frame, display_text, (x1, max(y1 - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+    # Hiển thị FPS
+    if show_fps and start_time > 0 and mode != "image":
+        fps = 1.0 / (time.time() - start_time)
+        cv2.putText(processed_frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-    if show_fps:
-        fps = 1.0 / (current_time - start_time + 1e-6)
-        cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
-
-    return frame, cam_cache.last_valid_count, audio_triggers
+    # TRẢ VỀ: Khung ảnh đã vẽ, Số lượng biển, MẢNG chứa các file âm thanh cần phát
+    return processed_frame, box_count, audio_triggers
