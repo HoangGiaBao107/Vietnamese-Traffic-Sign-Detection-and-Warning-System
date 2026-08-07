@@ -1,6 +1,7 @@
 import streamlit as st
 import base64
 import os
+import time
 from config import BASE_DIR, BG_IMAGE_PATH
 
 def get_base64_of_bin_file(filename):
@@ -12,8 +13,8 @@ def get_base64_of_bin_file(filename):
 
 def trigger_audio_queue(audio_paths, placeholder):
     """
-    Phát âm thanh trực tiếp bằng thẻ HTML5 thay vì phụ thuộc JS window.parent.
-    Tránh lỗi iframe cross-origin trên Streamlit Share.
+    Phát âm thanh trực tiếp bằng thẻ HTML5.
+    Thêm timestamp vào key/ID để ép trình duyệt Streamlit luôn tải lại âm thanh.
     """
     if not audio_paths:
         return
@@ -24,14 +25,15 @@ def trigger_audio_queue(audio_paths, placeholder):
     if os.path.exists(path):
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
+            unique_id = time.time() # Ép Streamlit render lại DOM
             
-            # Sử dụng thẻ audio HTML5 ẩn với tính năng autoplay
             audio_html = f"""
-            <audio autoplay style="display:none;">
-                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            </audio>
+            <div id="audio-container-{unique_id}">
+                <audio autoplay style="display:none;">
+                    <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+                </audio>
+            </div>
             """
-            # Render trực tiếp vào UI 
             placeholder.markdown(audio_html, unsafe_allow_html=True)
     else:
         print(f"Không tìm thấy tệp âm thanh: {path}")
