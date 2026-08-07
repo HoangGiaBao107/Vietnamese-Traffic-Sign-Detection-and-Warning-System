@@ -93,57 +93,41 @@ def render_home():
         if st.button("Tải Ảnh lên / Upload Image", use_container_width=True):
             change_page('image')
 
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
+import av
+
 def render_camera():
     if st.button("🔙 Về trang chủ / Back to Home"):
         change_page('home')
         
-    st.header("Luồng Camera Trực tiếp / Local Edge Camera")
-    st.info("💡 Đã gỡ bỏ WebRTC gây nghẽn. Hệ thống chuyển về kiến trúc Native OpenCV để đồng bộ hoàn hảo hình ảnh và âm thanh.")
+    st.header("Luồng Camera Trực tiếp / Cloud WebRTC Camera")
+    st.warning("⚠️ Đang chạy trên Server Cloud: Hệ thống sử dụng WebRTC để lấy luồng video từ thiết bị của bạn một cách an toàn.")
+    st.info("💡 Để đảm bảo FPS luôn mượt mà và không làm sập kết nối máy chủ, âm thanh cảnh báo tạm thời được tắt ở chế độ Live Camera. Hệ thống sẽ cảnh báo trực quan bằng cách tô sáng biển báo trên màn hình.")
 
     col_cam, col_opt = st.columns([3, 1])
     
     with col_opt:
         show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_cam")
-        run = st.checkbox("🔴 BẬT / TẮT CAMERA", value=False)
-        audio_ph = st.empty()
 
     with col_cam:
-        stframe = st.empty()
+        def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+            # Nhận ảnh từ trình duyệt người dùng chuyển lên
+            img = frame.to_ndarray(format="bgr24")
+            img = cv2.resize(img, (640, 480))
+            
+            # Xử lý nhận diện bằng YOLO, cố tình bỏ qua mảng audio_triggers để không block WebRTC
+            processed_frame, _, _ = process_frame(img, show_fps, time.time(), is_image=False)
+            
+            # Trả ảnh đã vẽ bounding box về lại trình duyệt
+            return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
 
-    if run:
-        cap = cv2.VideoCapture(0)
-        
-        # Ép phần cứng chạy phân giải và FPS tối ưu
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30) 
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Vô cùng quan trọng để chống delay hình ảnh
-        
-        if not cap.isOpened():
-            st.error("Không thể mở được Camera! Hãy kiểm tra lại kết nối hoặc cấp quyền thiết bị.")
-            return
-
-        start_time = time.time()
-
-        while run:
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Mất kết nối với Camera.")
-                break
-            
-            frame = cv2.resize(frame, (640, 480))
-            
-            # 1. Chạy YOLO và quét biển báo
-            processed_frame, _, audio_triggers = process_frame(frame, show_fps, start_time, is_image=False)
-            
-            # 2. Xử lý ÂM THANH MƯỢT MÀ (Không bao giờ kẹt luồng vì đang chạy ở Main Thread)
-            if audio_triggers:
-                trigger_audio_queue(audio_triggers, audio_ph)
-            
-            # 3. Render giao diện siêu tốc
-            stframe.image(processed_frame, channels="BGR", use_container_width=True)
-            
-        cap.release()
+        webrtc_streamer(
+            key="traffic-camera",
+            mode=WebRtcMode.SENDRECV,
+            video_frame_callback=video_frame_callback,
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True  # BẮT BUỘC bằng True để luồng video không bị nghẽn
+        )
 
 def render_video():
     if st.button("🔙 Về trang chủ / Back to Home"):
