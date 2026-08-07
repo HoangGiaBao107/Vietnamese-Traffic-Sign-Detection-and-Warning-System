@@ -1,7 +1,6 @@
 import streamlit as st
 import base64
 import os
-import streamlit.components.v1 as components
 from config import BASE_DIR, BG_IMAGE_PATH
 
 def get_base64_of_bin_file(filename):
@@ -11,63 +10,31 @@ def get_base64_of_bin_file(filename):
             return base64.b64encode(f.read()).decode()
     return ""
 
-def inject_js_audio_manager():
-    """
-    Tiêm Javascript Audio Manager vào DOM chính của Streamlit.
-    Hệ thống này lắng nghe sự kiện onended để phát âm thanh mượt mà mà không đè lên nhau.
-    """
-    js_code = """
-    <script>
-    const doc = window.parent.document;
-    if (!doc.getElementById('custom-audio-manager')) {
-        const script = doc.createElement('script');
-        script.id = 'custom-audio-manager';
-        script.innerHTML = `
-            window.audioQueue = [];
-            window.isPlaying = false;
-            window.playNextAudio = function() {
-                if (window.audioQueue.length === 0) {
-                    window.isPlaying = false;
-                    return;
-                }
-                window.isPlaying = true;
-                let src = window.audioQueue.shift();
-                let audio = new Audio(src);
-                audio.onended = () => { window.playNextAudio(); };
-                audio.play().catch(e => { console.error("Audio block:", e); window.playNextAudio(); });
-            };
-            window.enqueueAudio = function(src) {
-                window.audioQueue.push(src);
-                if (!window.isPlaying) {
-                    window.playNextAudio();
-                }
-            };
-        `;
-        doc.head.appendChild(script);
-    }
-    </script>
-    """
-    components.html(js_code, height=0, width=0)
-
 def trigger_audio_queue(audio_paths, placeholder):
     """
-    Truyền dữ liệu âm thanh dạng Base64 từ Python sang hàng đợi Javascript.
+    Phát âm thanh trực tiếp bằng thẻ HTML5 thay vì phụ thuộc JS window.parent.
+    Tránh lỗi iframe cross-origin trên Streamlit Share.
     """
     if not audio_paths:
         return
         
-    js_commands = []
-    for path in audio_paths:
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-                # Đẩy file vào JS Queue
-                js_commands.append(f'window.parent.enqueueAudio("data:audio/mp3;base64,{b64}");')
+    # Lấy file âm thanh đầu tiên để phát
+    path = audio_paths[0]
     
-    if js_commands:
-        script = f"<script>{' '.join(js_commands)}</script>"
-        with placeholder:
-            components.html(script, height=0, width=0)
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+            
+            # Sử dụng thẻ audio HTML5 ẩn với tính năng autoplay
+            audio_html = f"""
+            <audio autoplay style="display:none;">
+                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            """
+            # Render trực tiếp vào UI 
+            placeholder.markdown(audio_html, unsafe_allow_html=True)
+    else:
+        print(f"Không tìm thấy tệp âm thanh: {path}")
 
 def inject_custom_css():
     bg_base64 = get_base64_of_bin_file(BG_IMAGE_PATH)
