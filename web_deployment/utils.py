@@ -3,7 +3,6 @@ import base64
 import os
 import streamlit.components.v1 as components
 from config import BASE_DIR, BG_IMAGE_PATH
-import json
 
 def get_base64_of_bin_file(filename):
     filepath = os.path.join(BASE_DIR, filename)
@@ -13,6 +12,10 @@ def get_base64_of_bin_file(filename):
     return ""
 
 def inject_js_audio_manager():
+    """
+    Tiêm Javascript Audio Manager vào DOM chính của trình duyệt.
+    Đảm bảo hàng chờ âm thanh hoạt động độc lập và không bị trùng đè.
+    """
     js_code = """
     <script>
     const doc = window.parent.document;
@@ -30,28 +33,18 @@ def inject_js_audio_manager():
                 }
                 window.parent.isAudioPlaying = true;
                 let src = window.parent.audioQueue.shift();
-                
-                // Dừng âm thanh cũ (nếu có) trước khi nạp âm thanh mới
-                if (window.parent.currentAudio) {
-                    window.parent.currentAudio.pause();
-                }
-                
-                window.parent.currentAudio = new Audio(src);
-                window.parent.currentAudio.onended = function() {
-                    window.parent.playNextAudio(); // Kích hoạt file tiếp theo
+                let audio = new Audio(src);
+                audio.onended = function() {
+                    window.parent.playNextAudio();
                 };
-                window.parent.currentAudio.onerror = function(e) {
+                audio.onerror = function(e) {
                     console.error("Lỗi phát âm thanh:", e);
-                    window.parent.playNextAudio(); // Bỏ qua file lỗi, phát tiếp
+                    window.parent.playNextAudio();
                 };
-                
-                let playPromise = window.parent.currentAudio.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch(function(e) {
-                        console.error("Trình duyệt chặn autoplay:", e);
-                        window.parent.playNextAudio();
-                    });
-                }
+                audio.play().catch(function(e) {
+                    console.error("Trình duyệt chặn autoplay:", e);
+                    window.parent.playNextAudio();
+                });
             };
 
             window.parent.enqueueAudio = function(src) {
@@ -69,21 +62,20 @@ def inject_js_audio_manager():
 
 def trigger_audio_queue(audio_paths, placeholder):
     """
-    Đẩy mảng âm thanh Base64 sang Javascript Queue thay vì phát từng file HTML.
+    Chuyển mã Base64 các tệp âm thanh sang hàng chờ JS trên Trình duyệt.
     """
     if not audio_paths:
         return
         
-    b64_list = []
+    js_commands = []
     for path in audio_paths:
         if os.path.exists(path):
             with open(path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
-                b64_list.append(f"data:audio/mp3;base64,{b64}")
-                
-    if b64_list:
-        js_array = json.dumps(b64_list)
-        script = f"<script>window.parent.enqueueAudioBatch({js_array});</script>"
+                js_commands.append(f'window.parent.enqueueAudio("data:audio/mp3;base64,{b64}");')
+    
+    if js_commands:
+        script = f"<script>{' '.join(js_commands)}</script>"
         with placeholder:
             components.html(script, height=0, width=0)
 
