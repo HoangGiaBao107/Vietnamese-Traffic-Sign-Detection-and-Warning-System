@@ -44,7 +44,7 @@ def render_home():
         """, 
         unsafe_allow_html=True
     )
-    col2, col3 = st.columns(2, gap="super large")
+    col2, col3 = st.columns(2, gap="large")
     card_style = "height: 280px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 10px;"
             
     with col2:
