@@ -97,43 +97,53 @@ def render_camera():
     if st.button("🔙 Về trang chủ / Back to Home"):
         change_page('home')
         
-    st.header("Luồng Camera Trực tiếp / Real-time Camera Feed")
+    st.header("Luồng Camera Trực tiếp / Local Edge Camera")
+    st.info("💡 Đã gỡ bỏ WebRTC gây nghẽn. Hệ thống chuyển về kiến trúc Native OpenCV để đồng bộ hoàn hảo hình ảnh và âm thanh.")
 
     col_cam, col_opt = st.columns([3, 1])
     
     with col_opt:
         show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_cam")
+        run = st.checkbox("🔴 BẬT / TẮT CAMERA", value=False)
         audio_ph = st.empty()
 
     with col_cam:
-        def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-            img = frame.to_ndarray(format="bgr24")
-            img = cv2.resize(img, (640, 480))
-            
-            processed_frame, _, audio_triggers = process_frame(img, show_fps, time.time(), is_image=False)
-            
-            # Kiến trúc Producer-Consumer: Đẩy audio class vào Queue an toàn thay vì gọi UI
-            if audio_triggers:
-                st.session_state.webrtc_audio_queue.put(audio_triggers)
-                
-            return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+        stframe = st.empty()
 
-        ctx = webrtc_streamer(
-            key="traffic-camera",
-            mode=WebRtcMode.SENDRECV,
-            video_frame_callback=video_frame_callback,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=False  # Vô cùng quan trọng để chống tắc nghẽn khung hình
-        )
+    if run:
+        cap = cv2.VideoCapture(0)
         
-        # Main Thread đọc Queue để phát Audio 
-        if ctx and ctx.state.playing:
-            while ctx.state.playing:
-                try:
-                    triggers = st.session_state.webrtc_audio_queue.get(timeout=1.0)
-                    trigger_audio_queue(triggers, audio_ph)
-                except queue.Empty:
-                    pass
+        # Ép phần cứng chạy phân giải và FPS tối ưu
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30) 
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Vô cùng quan trọng để chống delay hình ảnh
+        
+        if not cap.isOpened():
+            st.error("Không thể mở được Camera! Hãy kiểm tra lại kết nối hoặc cấp quyền thiết bị.")
+            return
+
+        start_time = time.time()
+
+        while run:
+            ret, frame = cap.read()
+            if not ret:
+                st.error("Mất kết nối với Camera.")
+                break
+            
+            frame = cv2.resize(frame, (640, 480))
+            
+            # 1. Chạy YOLO và quét biển báo
+            processed_frame, _, audio_triggers = process_frame(frame, show_fps, start_time, is_image=False)
+            
+            # 2. Xử lý ÂM THANH MƯỢT MÀ (Không bao giờ kẹt luồng vì đang chạy ở Main Thread)
+            if audio_triggers:
+                trigger_audio_queue(audio_triggers, audio_ph)
+            
+            # 3. Render giao diện siêu tốc
+            stframe.image(processed_frame, channels="BGR", use_container_width=True)
+            
+        cap.release()
 
 def render_video():
     if st.button("🔙 Về trang chủ / Back to Home"):
