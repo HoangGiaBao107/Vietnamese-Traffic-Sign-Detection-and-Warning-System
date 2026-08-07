@@ -28,101 +28,64 @@ _global_state = {
     'smooth_fps': 0.0
 }
 
-def process_frame(frame, show_fps, start_time, is_image=False):
+def process_frame(frame, show_fps, start_time, mode="camera", current_video_time=0.0):
     if yolo_model is None:
-        cv2.putText(frame, "Error: Model file not found!", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.putText(frame, "Error: Model not found!", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         return frame, 0, []
 
-    current_time = time.time()
+    if 'last_audio_time' not in st.session_state:
+        st.session_state.last_audio_time = {}
+
+    results = yolo_model.predict(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
     valid_boxes_count = 0
-    audio_triggers = []
-    
-    with _lock:
-        # FPS Optimization: Bỏ qua frame Inference, chạy Model ở ~10 FPS, Render vẽ đồ họa ở 30 FPS
-        if is_image or (current_time - _global_state['inference_cache']['last_time'] >= 0.1):
-            
-            # Sử dụng lại chính xác hàm .predict() gốc của bạn để kích hoạt Auto-padding cho file ONNX
-            results = yolo_model.predict(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
-            
-            _global_state['inference_cache']['boxes'] = results[0].boxes
-            _global_state['inference_cache']['last_time'] = current_time
-            
-            class_confidences = {}
-            for box in results[0].boxes:
-                conf = float(box.conf[0])
-                cls_id = int(box.cls[0])
-                if cls_id not in class_confidences or conf > class_confidences[cls_id]:
-                    class_confidences[cls_id] = conf
-            _global_state['inference_cache']['class_confidences'] = class_confidences
-        
-        boxes = _global_state['inference_cache']['boxes']
-        class_confidences = _global_state['inference_cache']['class_confidences']
+    drawn_labels = [] 
+    detected_class_ids = set()
 
-        # O(1) Offset Map: Thuật toán dời label O(1) thay cho O(n^2) Check Overlap cũ
-        y_offset_map = {}
-
+    for result in results:
+        boxes = result.boxes
         for box in boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             conf = float(box.conf[0])
             cls_id = int(box.cls[0])
+            
+            if conf < CONFIDENCE_THRESHOLD:
+                continue
+                
             valid_boxes_count += 1
+            detected_class_ids.add(cls_id)
             
             eng_text = ENGLISH_SUBTITLES.get(cls_id, f"Class {cls_id}")
             display_text = f"{eng_text} ({conf*100:.1f}%)"
+            
             (text_w, text_h), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            
-            x_grid = x1 // 50 
-            y_offset = y_offset_map.get(x_grid, 0)
-            
-            label_x1 = x1
-            label_y1 = max(0, y1 - 25 - y_offset)
-            label_x2 = x1 + text_w
-            label_y2 = label_y1 + 25
+            label_x1, label_y1 = x1, y1 - 25
+            label_x2, label_y2 = x1 + text_w, y1
 
-            y_offset_map[x_grid] = y_offset + 30
-            
+            while any(is_overlap((label_x1, label_y1, label_x2, label_y2), drawn) for drawn in drawn_labels):
+                label_y1 -= (text_h + 10)
+                label_y2 -= (text_h + 10)
+
+            drawn_labels.append((label_x1, label_y1, label_x2, label_y2))
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.rectangle(frame, (label_x1, label_y1), (label_x2, label_y2), (0, 255, 0), -1)
             cv2.putText(frame, display_text, (label_x1, label_y2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
 
-        if not is_image:
-            for cls_id, conf in class_confidences.items():
-                if cls_id not in _global_state['detection_timestamps']:
-                    # Tối ưu RAM: dùng deque maxlen 10 thay cho list vô hạn
-                    _global_state['detection_timestamps'][cls_id] = deque(maxlen=10)
-                _global_state['detection_timestamps'][cls_id].append(current_time)
-                
-            for cls_id in list(_global_state['detection_timestamps'].keys()):
-                valid_times = [t for t in _global_state['detection_timestamps'][cls_id] if current_time - t <= 5.0]
-                _global_state['detection_timestamps'][cls_id] = deque(valid_times, maxlen=10)
-                
-                if len(_global_state['detection_timestamps'][cls_id]) >= 7:
-                    last_time = _global_state['last_audio_time'].get(cls_id, 0)
-                    if current_time - last_time > COOLDOWN_SECONDS:
-                        if cls_id in AUDIO_PATHS:
-                            audio_triggers.append(AUDIO_PATHS[cls_id])
-                        _global_state['last_audio_time'][cls_id] = current_time
-                        
-                    _global_state['detection_timestamps'][cls_id].clear()
-        else:
-            for cls_id in class_confidences.keys():
-                if cls_id in AUDIO_PATHS:
-                    audio_triggers.append(AUDIO_PATHS[cls_id])
+    # Xử lý mốc thời gian tùy theo Mode (Camera thật hay Video offline)
+    current_time_val = current_video_time if mode == "video" else time.time()
+    audio_triggers = []
 
-    if show_fps:
-        last_frame_time = _global_state['last_frame_time']
-        
-        # Tính khoảng thời gian giữa khung hình hiện tại và khung hình trước đó
-        if last_frame_time == 0:
-            fps = 0
-        else:
-            fps = 1.0 / (current_time - last_frame_time + 1e-6)
-            
-        # Áp dụng bộ lọc trung bình cộng (Moving Average) để số FPS không bị nhảy loạn xạ
-        _global_state['smooth_fps'] = (_global_state['smooth_fps'] * 0.9) + (fps * 0.1)
-        
-        cv2.putText(frame, f"FPS: {int(_global_state['smooth_fps'])}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
-        
-    _global_state['last_frame_time'] = current_time
+    for cls_id in detected_class_ids:
+        if cls_id in AUDIO_PATHS:
+            if mode == "image":
+                audio_triggers.append(AUDIO_PATHS[cls_id])
+            else:
+                last_time = st.session_state.last_audio_time.get(cls_id, -999)
+                if current_time_val - last_time > COOLDOWN_SECONDS:
+                    audio_triggers.append(AUDIO_PATHS[cls_id])
+                    st.session_state.last_audio_time[cls_id] = current_time_val
+
+    if show_fps and mode != "image":
+        fps = 1.0 / (time.time() - start_time + 1e-6)
+        cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
 
     return frame, valid_boxes_count, audio_triggers
