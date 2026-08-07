@@ -1,7 +1,7 @@
 import streamlit as st
 import base64
 import os
-import time
+import streamlit.components.v1 as components
 from config import BASE_DIR, BG_IMAGE_PATH
 
 def get_base64_of_bin_file(filename):
@@ -11,32 +11,73 @@ def get_base64_of_bin_file(filename):
             return base64.b64encode(f.read()).decode()
     return ""
 
+def inject_js_audio_manager():
+    """
+    Tiêm Javascript Audio Manager vào DOM chính của trình duyệt.
+    Đảm bảo hàng chờ âm thanh hoạt động độc lập và không bị trùng đè.
+    """
+    js_code = """
+    <script>
+    const doc = window.parent.document;
+    if (!doc.getElementById('custom-audio-manager')) {
+        const script = doc.createElement('script');
+        script.id = 'custom-audio-manager';
+        script.innerHTML = `
+            window.parent.audioQueue = window.parent.audioQueue || [];
+            window.parent.isAudioPlaying = window.parent.isAudioPlaying || false;
+
+            window.parent.playNextAudio = function() {
+                if (window.parent.audioQueue.length === 0) {
+                    window.parent.isAudioPlaying = false;
+                    return;
+                }
+                window.parent.isAudioPlaying = true;
+                let src = window.parent.audioQueue.shift();
+                let audio = new Audio(src);
+                audio.onended = function() {
+                    window.parent.playNextAudio();
+                };
+                audio.onerror = function(e) {
+                    console.error("Lỗi phát âm thanh:", e);
+                    window.parent.playNextAudio();
+                };
+                audio.play().catch(function(e) {
+                    console.error("Trình duyệt chặn autoplay:", e);
+                    window.parent.playNextAudio();
+                });
+            };
+
+            window.parent.enqueueAudio = function(src) {
+                window.parent.audioQueue.push(src);
+                if (!window.parent.isAudioPlaying) {
+                    window.parent.playNextAudio();
+                }
+            };
+        `;
+        doc.head.appendChild(script);
+    }
+    </script>
+    """
+    components.html(js_code, height=0, width=0)
+
 def trigger_audio_queue(audio_paths, placeholder):
     """
-    Phát âm thanh trực tiếp bằng thẻ HTML5.
-    Thêm timestamp vào key/ID để ép trình duyệt Streamlit luôn tải lại âm thanh.
+    Chuyển mã Base64 các tệp âm thanh sang hàng chờ JS trên Trình duyệt.
     """
     if not audio_paths:
         return
         
-    # Lấy file âm thanh đầu tiên để phát
-    path = audio_paths[0]
+    js_commands = []
+    for path in audio_paths:
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+                js_commands.append(f'window.parent.enqueueAudio("data:audio/mp3;base64,{b64}");')
     
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-            unique_id = time.time() # Ép Streamlit render lại DOM
-            
-            audio_html = f"""
-            <div id="audio-container-{unique_id}">
-                <audio autoplay style="display:none;">
-                    <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-                </audio>
-            </div>
-            """
-            placeholder.markdown(audio_html, unsafe_allow_html=True)
-    else:
-        print(f"Không tìm thấy tệp âm thanh: {path}")
+    if js_commands:
+        script = f"<script>{' '.join(js_commands)}</script>"
+        with placeholder:
+            components.html(script, height=0, width=0)
 
 def inject_custom_css():
     bg_base64 = get_base64_of_bin_file(BG_IMAGE_PATH)
