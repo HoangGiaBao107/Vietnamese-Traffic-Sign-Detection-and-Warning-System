@@ -33,13 +33,15 @@ def process_frame(frame, show_fps, start_time, is_image=False):
         cv2.putText(frame, "Error: Model file not found!", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         return frame, 0, []
 
+    if 'detection_timestamps' not in st.session_state:
+        st.session_state.detection_timestamps = {}
     if 'last_audio_time' not in st.session_state:
         st.session_state.last_audio_time = {}
 
     results = yolo_model.predict(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
+    class_confidences = {}
     valid_boxes_count = 0
     drawn_labels = [] 
-    detected_class_ids = set()
 
     for result in results:
         boxes = result.boxes
@@ -52,7 +54,8 @@ def process_frame(frame, show_fps, start_time, is_image=False):
                 continue
                 
             valid_boxes_count += 1
-            detected_class_ids.add(cls_id)
+            if cls_id not in class_confidences or conf > class_confidences[cls_id]:
+                class_confidences[cls_id] = conf
             
             eng_text = ENGLISH_SUBTITLES.get(cls_id, f"Class {cls_id}")
             display_text = f"{eng_text} ({conf*100:.1f}%)"
@@ -77,16 +80,31 @@ def process_frame(frame, show_fps, start_time, is_image=False):
     current_time = time.time()
     audio_triggers = []
 
-    # Xử lý âm thanh ngay lập tức cho TẤT CẢ các biển báo được nhận diện
-    for cls_id in detected_class_ids:
-        if cls_id in AUDIO_PATHS:
-            if is_image:
-                audio_triggers.append(AUDIO_PATHS[cls_id])
-            else:
+    if not is_image:
+        for cls_id, conf in class_confidences.items():
+            if cls_id not in st.session_state.detection_timestamps:
+                st.session_state.detection_timestamps[cls_id] = []
+            st.session_state.detection_timestamps[cls_id].append(current_time)
+            
+        for cls_id in list(st.session_state.detection_timestamps.keys()):
+            st.session_state.detection_timestamps[cls_id] = [
+                t for t in st.session_state.detection_timestamps[cls_id]
+                if current_time - t <= 5.0
+            ]
+            
+            if len(st.session_state.detection_timestamps[cls_id]) >= 7:
                 last_time = st.session_state.last_audio_time.get(cls_id, 0)
+                
                 if current_time - last_time > COOLDOWN_SECONDS:
-                    audio_triggers.append(AUDIO_PATHS[cls_id])
+                    if cls_id in AUDIO_PATHS:
+                        audio_triggers.append(AUDIO_PATHS[cls_id])
                     st.session_state.last_audio_time[cls_id] = current_time
+                    
+                st.session_state.detection_timestamps[cls_id] = []
+    else:
+        for cls_id in class_confidences.keys():
+            if cls_id in AUDIO_PATHS:
+                audio_triggers.append(AUDIO_PATHS[cls_id])
 
     if show_fps:
         fps = 1.0 / (current_time - start_time + 1e-6)
