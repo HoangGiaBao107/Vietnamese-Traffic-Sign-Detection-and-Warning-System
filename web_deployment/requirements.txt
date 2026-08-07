@@ -5,3 +5,6 @@ torch
 torchvision
 pillow
 onnxruntime
+numpy
+streamlit-webrtc
+av
