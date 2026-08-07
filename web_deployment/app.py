@@ -3,14 +3,20 @@ import cv2
 import time
 import numpy as np
 import tempfile
+import queue
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
+import av
 from utils import inject_custom_css, inject_js_audio_manager, trigger_audio_queue
 from detector import process_frame
 
 st.set_page_config(page_title="Phát hiện Biển báo / Traffic Sign Detection", layout="wide")
 
-# Khởi tạo CSS và JS Audio Manager
 inject_custom_css()
 inject_js_audio_manager()
+
+# Khởi tạo Hàng đợi Audio Thread-safe cho WebRTC
+if 'webrtc_audio_queue' not in st.session_state:
+    st.session_state.webrtc_audio_queue = queue.Queue()
 
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'home'
@@ -38,12 +44,10 @@ def render_home():
         """, 
         unsafe_allow_html=True
     )
-
-    col1, col2 = st.columns(2, gap="large")
+    col2, col3 = st.columns(2, gap="large")
     card_style = "height: 280px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 10px;"
-
-  
-    with col1:
+            
+    with col2:
         st.markdown(
             f"""
             <div class='card' style='{card_style}'>
@@ -58,7 +62,7 @@ def render_home():
         if st.button("Tải Video lên / Upload Video", use_container_width=True):
             change_page('video')
             
-    with col2:
+    with col3:
         st.markdown(
             f"""
             <div class='card' style='{card_style}'>
@@ -81,6 +85,8 @@ def render_video():
     uploaded_video = st.file_uploader("Chọn tệp video / Choose a video file", type=['mp4', 'avi', 'mov'])
     
     if uploaded_video:
+        enable_audio = st.checkbox("🔔 Bật phát cảnh báo âm thanh", value=True)
+        
         col_vid, col_opt = st.columns([3, 1])
         with col_opt:
             show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_vid")
@@ -95,6 +101,7 @@ def render_video():
             tfile.write(uploaded_video.read())
             
             cap = cv2.VideoCapture(tfile.name)
+            fps_video = cap.get(cv2.CAP_PROP_FPS) or 30.0
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             
             progress_bar = st.progress(0)
@@ -102,20 +109,26 @@ def render_video():
             frame_idx = 0
             
             while cap.isOpened():
-                start_time = time.time()
                 ret, frame = cap.read()
                 if not ret: 
                     break
                 
                 frame_idx += 1
+                start_time = time.time()
+                
                 processed_frame, _, audio_triggers = process_frame(frame, show_fps, start_time, is_image=False)
                 
-                trigger_audio_queue(audio_triggers, audio_ph)
+                if enable_audio and audio_triggers:
+                    trigger_audio_queue(audio_triggers, audio_ph)
+                
                 stframe.image(processed_frame, channels="BGR", use_container_width=True)
                 
                 if total_frames > 0:
                     progress_bar.progress(min(frame_idx / total_frames, 1.0))
                     status_text.text(f"Đang phân tích khung hình: {frame_idx}/{total_frames}")
+                    
+                # Delay để Streamlit kịp render UI
+                time.sleep(1 / fps_video)
                 
             cap.release()
             st.success("Xử lý video hoàn tất! / Video processing completed successfully!")
@@ -134,7 +147,6 @@ def render_image():
         
         with st.spinner("Đang phân tích ảnh... / Analyzing image..."):
             processed_frame, box_count, audio_triggers = process_frame(frame, show_fps=False, start_time=time.time(), is_image=True)
-            
             trigger_audio_queue(audio_triggers, audio_ph)
             st.image(processed_frame, channels="BGR", width=800)
             
