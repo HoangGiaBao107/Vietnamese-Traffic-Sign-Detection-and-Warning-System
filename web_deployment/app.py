@@ -3,16 +3,14 @@ import cv2
 import time
 import numpy as np
 import tempfile
-import queue
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
-import av
-from utils import inject_custom_css, trigger_audio_queue
+from utils import inject_custom_css, inject_js_audio_manager, trigger_audio_queue
 from detector import process_frame
 
 st.set_page_config(page_title="Phát hiện Biển báo / Traffic Sign Detection", layout="wide")
 
-# Khởi tạo CSS ngay từ đầu
+# Khởi tạo CSS và JS Audio Manager
 inject_custom_css()
+inject_js_audio_manager()
 
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'home'
@@ -94,52 +92,42 @@ def render_camera():
         change_page('home')
         
     st.header("Luồng Camera Trực tiếp / Real-time Camera Feed")
-    st.info("💡 Hệ thống sử dụng WebRTC. Nhấn nút 'START' bên dưới để cấp quyền mở Camera.")
 
     col_cam, col_opt = st.columns([3, 1])
     
     with col_opt:
         show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_cam")
-        enable_audio = st.checkbox("🔔 Bật cảnh báo âm thanh", value=True)
+        run = st.checkbox("🔴 BẬT / TẮT CAMERA", value=False)
         audio_ph = st.empty()
 
     with col_cam:
-        # 1. Tạo hàng đợi (Queue) chuyên biệt để giao tiếp giữa luồng WebRTC và luồng Streamlit UI
-        audio_queue = queue.Queue()
+        stframe = st.empty()
 
-        def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-            img = frame.to_ndarray(format="bgr24")
-            img = cv2.resize(img, (640, 480))
-            
-            # Xử lý hình ảnh
-            processed_frame, _, audio_triggers = process_frame(img, show_fps, time.time(), is_image=False)
-            
-            # 2. Nếu phát hiện biển báo, đẩy đường dẫn âm thanh vào hàng đợi thay vì gọi trực tiếp UI
-            if audio_triggers:
-                for path in audio_triggers:
-                    audio_queue.put(path)
-            
-            return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+    if run:
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 60) 
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if not cap.isOpened():
+            st.error("Không thể mở được Camera! Hãy kiểm tra lại kết nối.")
+            return
 
-        ctx = webrtc_streamer(
-            key="traffic-camera",
-            mode=WebRtcMode.SENDRECV,
-            video_frame_callback=video_frame_callback,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True
-        )
+        while run:
+            start_time = time.time()
+            ret, frame = cap.read()
+            if not ret:
+                st.error("Mất kết nối với Camera.")
+                break
+            
+            frame = cv2.resize(frame, (640, 480))
+            processed_frame, _, audio_triggers = process_frame(frame, show_fps, start_time, is_image=False)
+            
+            trigger_audio_queue(audio_triggers, audio_ph)
+            stframe.image(processed_frame, channels="BGR", use_container_width=True)
 
-    # 3. Vòng lặp chính liên tục lắng nghe hàng đợi để xuất âm thanh
-    if ctx.state.playing:
-        while True:
-            try:
-                # Đợi dữ liệu từ Queue, timeout 0.5s để không làm treo CPU
-                audio_path = audio_queue.get(timeout=0.5)
-                if enable_audio:
-                    trigger_audio_queue([audio_path], audio_ph)
-            except queue.Empty:
-                # Vòng lặp sẽ tiếp tục nếu Queue trống
-                pass
+        cap.release()
 
 def render_video():
     if st.button("🔙 Về trang chủ / Back to Home"):
@@ -149,8 +137,6 @@ def render_video():
     uploaded_video = st.file_uploader("Chọn tệp video / Choose a video file", type=['mp4', 'avi', 'mov'])
     
     if uploaded_video:
-        enable_audio = st.checkbox("🔔 Bật phát cảnh báo âm thanh", value=True)
-        
         col_vid, col_opt = st.columns([3, 1])
         with col_opt:
             show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_vid")
@@ -172,18 +158,15 @@ def render_video():
             frame_idx = 0
             
             while cap.isOpened():
+                start_time = time.time()
                 ret, frame = cap.read()
                 if not ret: 
                     break
                 
                 frame_idx += 1
-                start_time = time.time()
-                
                 processed_frame, _, audio_triggers = process_frame(frame, show_fps, start_time, is_image=False)
                 
-                if enable_audio:
-                    trigger_audio_queue(audio_triggers, audio_ph)
-                
+                trigger_audio_queue(audio_triggers, audio_ph)
                 stframe.image(processed_frame, channels="BGR", use_container_width=True)
                 
                 if total_frames > 0:
@@ -209,7 +192,6 @@ def render_image():
             processed_frame, box_count, audio_triggers = process_frame(frame, show_fps=False, start_time=time.time(), is_image=True)
             
             trigger_audio_queue(audio_triggers, audio_ph)
-            
             st.image(processed_frame, channels="BGR", width=800)
             
             if box_count == 0:
