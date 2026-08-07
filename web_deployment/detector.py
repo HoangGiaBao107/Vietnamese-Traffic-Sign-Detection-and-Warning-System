@@ -23,7 +23,9 @@ _lock = threading.Lock()
 _global_state = {
     'inference_cache': {'last_time': 0, 'boxes': [], 'class_confidences': {}},
     'detection_timestamps': {},
-    'last_audio_time': {}
+    'last_audio_time': {},
+    'last_frame_time': 0,
+    'smooth_fps': 0.0
 }
 
 def process_frame(frame, show_fps, start_time, is_image=False):
@@ -108,7 +110,19 @@ def process_frame(frame, show_fps, start_time, is_image=False):
                     audio_triggers.append(AUDIO_PATHS[cls_id])
 
     if show_fps:
-        fps = 1.0 / (current_time - start_time + 1e-6)
-        cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+        last_frame_time = _global_state['last_frame_time']
+        
+        # Tính khoảng thời gian giữa khung hình hiện tại và khung hình trước đó
+        if last_frame_time == 0:
+            fps = 0
+        else:
+            fps = 1.0 / (current_time - last_frame_time + 1e-6)
+            
+        # Áp dụng bộ lọc trung bình cộng (Moving Average) để số FPS không bị nhảy loạn xạ
+        _global_state['smooth_fps'] = (_global_state['smooth_fps'] * 0.9) + (fps * 0.1)
+        
+        cv2.putText(frame, f"FPS: {int(_global_state['smooth_fps'])}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+        
+    _global_state['last_frame_time'] = current_time
 
     return frame, valid_boxes_count, audio_triggers
