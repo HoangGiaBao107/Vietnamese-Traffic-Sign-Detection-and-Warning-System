@@ -4,19 +4,13 @@ import time
 import numpy as np
 import tempfile
 import queue
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
-import av
-from utils import inject_custom_css, inject_js_audio_manager, trigger_audio_queue
+import os
+from utils import inject_custom_css, trigger_audio_queue
 from detector import process_frame
 
 st.set_page_config(page_title="Phát hiện Biển báo / Traffic Sign Detection", layout="wide")
 
 inject_custom_css()
-inject_js_audio_manager()
-
-# Khởi tạo Hàng đợi Audio Thread-safe cho WebRTC
-if 'webrtc_audio_queue' not in st.session_state:
-    st.session_state.webrtc_audio_queue = queue.Queue()
 
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'home'
@@ -85,53 +79,65 @@ def render_video():
     uploaded_video = st.file_uploader("Chọn tệp video / Choose a video file", type=['mp4', 'avi', 'mov'])
     
     if uploaded_video:
-        enable_audio = st.checkbox("🔔 Bật phát cảnh báo âm thanh", value=True)
+        show_fps = st.toggle("Hiển thị FPS trên Video", key="fps_vid")
+        process_btn = st.button("Bắt đầu Phân tích / Start Analysis")
         
-        col_vid, col_opt = st.columns([3, 1])
-        with col_opt:
-            show_fps = st.toggle("Hiển thị FPS / Show FPS", key="fps_vid")
-            process_btn = st.button("Bắt đầu Phân tích / Start Analysis")
-            audio_ph = st.empty()
-
-        with col_vid:
-            stframe = st.empty()
-            
         if process_btn:
-            tfile = tempfile.NamedTemporaryFile(delete=False)
+            # 1. Lưu video gốc vào bộ nhớ tạm
+            tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             tfile.write(uploaded_video.read())
             
             cap = cv2.VideoCapture(tfile.name)
             fps_video = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # 2. Cấu hình file đầu ra (Dùng định dạng WebM - vp80 để chạy trực tiếp được trên trình duyệt)
+            out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
+            fourcc = cv2.VideoWriter_fourcc(*'vp80')
+            out = cv2.VideoWriter(out_file.name, fourcc, fps_video, (width, height))
             
             progress_bar = st.progress(0)
             status_text = st.empty()
             frame_idx = 0
             
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret: 
-                    break
-                
-                frame_idx += 1
-                start_time = time.time()
-                
-                processed_frame, _, audio_triggers = process_frame(frame, show_fps, start_time, is_image=False)
-                
-                if enable_audio and audio_triggers:
-                    trigger_audio_queue(audio_triggers, audio_ph)
-                
-                stframe.image(processed_frame, channels="BGR", use_container_width=True)
-                
-                if total_frames > 0:
-                    progress_bar.progress(min(frame_idx / total_frames, 1.0))
-                    status_text.text(f"Đang phân tích khung hình: {frame_idx}/{total_frames}")
+            with st.spinner("Hệ thống đang xử lý, vui lòng đợi..."):
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret: 
+                        break
                     
-                # Delay để Streamlit kịp render UI
-                time.sleep(1 / fps_video)
-                
+                    frame_idx += 1
+                    start_time = time.time()
+                    
+                    # Truyền is_image=False, video xử lý offline nên ta không gọi audio ở đây
+                    processed_frame, _, _ = process_frame(frame, show_fps, start_time, is_image=False)
+                    out.write(processed_frame)
+                    
+                    # Cập nhật UI mỗi 5 frame để tăng tốc độ xử lý
+                    if total_frames > 0 and frame_idx % 5 == 0:
+                        progress_bar.progress(min(frame_idx / total_frames, 1.0))
+                        status_text.text(f"Đang phân tích khung hình: {frame_idx}/{total_frames}")
+                        
             cap.release()
-            st.success("Xử lý video hoàn tất! / Video processing completed successfully!")
+            out.release()
+            
+            progress_bar.progress(1.0)
+            status_text.text("Xử lý hoàn tất! Đang tải trình phát video...")
+            
+            # 3. Phát video bằng Streamlit
+            st.success("Xử lý video thành công!")
+            st.video(out_file.name)
+            
+            # 4. Thêm nút tải video về máy
+            with open(out_file.name, "rb") as file:
+                st.download_button(
+                    label="⬇️ Tải Video đã phân tích về máy",
+                    data=file,
+                    file_name="detected_video.webm",
+                    mime="video/webm"
+                )
 
 def render_image():
     if st.button("🔙 Về trang chủ / Back to Home"):
@@ -141,13 +147,18 @@ def render_image():
     uploaded_image = st.file_uploader("Chọn tệp ảnh / Choose an image file", type=['jpg', 'jpeg', 'png'])
     
     if uploaded_image:
+        # Nơi chứa trình phát âm thanh ẩn
         audio_ph = st.empty()
+        
         file_bytes = np.asarray(bytearray(uploaded_image.read()), dtype=np.uint8)
         frame = cv2.imdecode(file_bytes, 1)
         
         with st.spinner("Đang phân tích ảnh... / Analyzing image..."):
             processed_frame, box_count, audio_triggers = process_frame(frame, show_fps=False, start_time=time.time(), is_image=True)
+            
+            # Gọi hàm phát audio (Hỗ trợ nhiều biển báo cùng lúc)
             trigger_audio_queue(audio_triggers, audio_ph)
+            
             st.image(processed_frame, channels="BGR", width=800)
             
             if box_count == 0:
@@ -158,8 +169,6 @@ def render_image():
 if __name__ == "__main__":
     if st.session_state.current_page == 'home': 
         render_home()
-    elif st.session_state.current_page == 'camera': 
-        render_camera()
     elif st.session_state.current_page == 'video': 
         render_video()
     elif st.session_state.current_page == 'image': 
