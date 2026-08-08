@@ -1,9 +1,9 @@
 import cv2
 import time
 import os
-import streamlit as st
 from ultralytics import YOLO
 from config import MODEL_PATH, AUDIO_PATHS, ENGLISH_SUBTITLES, CONFIDENCE_THRESHOLD, COOLDOWN_SECONDS
+import streamlit as st
 
 @st.cache_resource
 def load_model():
@@ -77,7 +77,7 @@ def process_frame(frame, show_fps, start_time, is_image=False):
     current_time = time.time()
     audio_triggers = []
 
-    # Xử lý âm thanh ngay lập tức cho TẤT CẢ các biển báo được nhận diện
+    # Xử lý lấy danh sách âm thanh
     for cls_id in detected_class_ids:
         if cls_id in AUDIO_PATHS:
             if is_image:
