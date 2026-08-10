@@ -1,11 +1,5 @@
 streamlit
+opencv-python
 ultralytics
-opencv-python-headless
-torch
-torchvision
-pillow
-onnxruntime
 numpy
-streamlit-webrtc
-av
-moviepy
+moviepy==1.0.3
