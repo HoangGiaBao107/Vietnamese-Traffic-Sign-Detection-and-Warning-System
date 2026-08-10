@@ -28,11 +28,11 @@ def is_overlap(rect1, rect2):
         return False
     return True
 
-def process_frame(frame, show_fps, start_time, is_image=False):
+def process_frame(frame, show_fps, start_time, video_time=0.0, is_image=False):
     if yolo_model is None:
         cv2.putText(frame, "Error: Model file not found!", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         return frame, 0, []
-
+        
     if 'last_audio_time' not in st.session_state:
         st.session_state.last_audio_time = {}
 
@@ -74,22 +74,25 @@ def process_frame(frame, show_fps, start_time, is_image=False):
             cv2.rectangle(frame, (label_x1, label_y1), (label_x2, label_y2), (0, 255, 0), -1)
             cv2.putText(frame, display_text, (label_x1, label_y2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
 
-    current_time = time.time()
+    current_sys_time = time.time()
     audio_triggers = []
 
     # Xử lý lấy danh sách âm thanh
     for cls_id in detected_class_ids:
         if cls_id in AUDIO_PATHS:
             if is_image:
+                # Chế độ ảnh: luôn lấy cảnh báo
                 audio_triggers.append(AUDIO_PATHS[cls_id])
             else:
-                last_time = st.session_state.last_audio_time.get(cls_id, 0)
-                if current_time - last_time > COOLDOWN_SECONDS:
+                # Chế độ video: Tính Cooldown theo THỜI GIAN CỦA VIDEO (video_time)
+                last_time = st.session_state.last_audio_time.get(cls_id, -COOLDOWN_SECONDS - 1)
+                if video_time - last_time > COOLDOWN_SECONDS:
                     audio_triggers.append(AUDIO_PATHS[cls_id])
-                    st.session_state.last_audio_time[cls_id] = current_time
+                    st.session_state.last_audio_time[cls_id] = video_time
 
+    # Tính FPS tốc độ xử lý phần cứng
     if show_fps:
-        fps = 1.0 / (current_time - start_time + 1e-6)
+        fps = 1.0 / (current_sys_time - start_time + 1e-6)
         cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
 
     return frame, valid_boxes_count, audio_triggers
