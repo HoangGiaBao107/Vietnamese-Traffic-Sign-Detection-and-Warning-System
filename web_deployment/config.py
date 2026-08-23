@@ -11,6 +11,15 @@ CONFIDENCE_THRESHOLD = 0.60  # Tăng lên 60% để lọc bớt nhận diện nh
 COOLDOWN_SECONDS = 10
 FRAMES_TO_CONFIRM = 3  # Yêu cầu biển báo phải xuất hiện liên tục 3 frames mới phát âm thanh
 
+# ==== TỐI ƯU BỘ NHỚ (MỚI) ====
+# Giới hạn kích thước cạnh dài nhất của frame trước khi đưa vào YOLO.
+# Video full-HD/4K sẽ bị resize xuống mức này để giảm RAM/VRAM khi predict,
+# box vẽ ra vẫn được scale ngược lại đúng kích thước gốc nên không ảnh hưởng hiển thị.
+MAX_INFER_SIZE = 960
+
+# Sau bao nhiêu frame thì dọn rác (gc.collect) một lần trong lúc xử lý video.
+GC_COLLECT_EVERY_N_FRAMES = 50
+
 AUDIO_PATHS = {
     0: os.path.join(AUDIO_DIR, "102-cam-di-nguoc-chieu.mp3"),
     1: os.path.join(AUDIO_DIR, "103a-cam-oto.mp3"),

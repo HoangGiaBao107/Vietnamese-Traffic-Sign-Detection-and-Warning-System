@@ -4,12 +4,14 @@ import os
 import streamlit.components.v1 as components
 from config import BASE_DIR, BG_IMAGE_PATH
 
+
 def get_base64_of_bin_file(filename):
     filepath = os.path.join(BASE_DIR, filename)
     if os.path.exists(filepath):
         with open(filepath, 'rb') as f:
             return base64.b64encode(f.read()).decode()
     return ""
+
 
 def trigger_audio_queue(audio_paths, placeholder=None):
     """
@@ -18,13 +20,13 @@ def trigger_audio_queue(audio_paths, placeholder=None):
     """
     if not audio_paths:
         return
-        
+
     b64_audios = []
     for path in audio_paths:
         if os.path.exists(path):
             with open(path, "rb") as f:
                 b64_audios.append(base64.b64encode(f.read()).decode())
-                
+
     if b64_audios:
         js_code = f"""
         <audio id="audio-player" autoplay></audio>
@@ -50,6 +52,7 @@ def trigger_audio_queue(audio_paths, placeholder=None):
                 components.html(js_code, height=0, width=0)
         else:
             components.html(js_code, height=0, width=0)
+
 
 def inject_custom_css():
     bg_base64 = get_base64_of_bin_file(BG_IMAGE_PATH)
