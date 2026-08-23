@@ -83,8 +83,9 @@ def render_video():
         process_btn = st.button("Bắt đầu Phân tích / Start Analysis")
         
         if process_btn:
-            # Reset lại thời gian cảnh báo để phân tích từ đầu video
+            # Reset lại thời gian và bộ đệm cảnh báo để phân tích từ đầu video
             st.session_state.last_audio_time = {}
+            st.session_state.detection_buffer = {}
             
             # 1. Lưu video gốc vào bộ nhớ tạm
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -105,7 +106,7 @@ def render_video():
             status_text = st.empty()
             
             frame_idx = 0
-            audio_events = [] # Thu thập audio triggers theo mốc thời gian
+            audio_events = [] 
             
             with st.spinner("Bước 1/2: Đang phân tích hình ảnh AI (YOLO)..."):
                 while cap.isOpened():
@@ -115,15 +116,13 @@ def render_video():
                     
                     frame_idx += 1
                     start_time = time.time()
-                    video_time_sec = frame_idx / fps_video  # Tính thời gian thực của frame hiện tại
+                    video_time_sec = frame_idx / fps_video  
                     
-                    # Truyền video_time_sec vào để tính Cooldown chính xác
                     processed_frame, _, audio_triggers = process_frame(
                         frame, show_fps, start_time, video_time=video_time_sec, is_image=False
                     )
                     out.write(processed_frame)
                     
-                    # Nếu có cảnh báo ở frame này, lưu lại mốc thời gian
                     if audio_triggers:
                         audio_events.append({
                             "time": video_time_sec,
@@ -146,7 +145,6 @@ def render_video():
             video_clip = VideoFileClip(temp_vid_no_audio.name)
             audio_clips = []
             
-            # GIẢI QUYẾT BÀI TOÁN: 2 Biển báo cùng lúc -> phát tuần tự không chồng âm
             next_available_audio_time = 0.0
             
             for event in audio_events:
@@ -155,27 +153,23 @@ def render_video():
                     if os.path.exists(path):
                         aclip = AudioFileClip(path)
                         
-                        # Thời gian bắt đầu phát audio này = Max(thời điểm phát hiện, thời điểm rảnh tiếp theo)
                         start_time_audio = max(trigger_time, next_available_audio_time)
                         
                         aclip = aclip.set_start(start_time_audio)
                         audio_clips.append(aclip)
                         
-                        # Cập nhật thời điểm rảnh tiếp theo
                         next_available_audio_time = start_time_audio + aclip.duration
             
             if audio_clips:
-                # Gom tất cả audio lại
                 final_audio = CompositeAudioClip(audio_clips)
                 video_clip = video_clip.set_audio(final_audio)
             
-            # Render ra file cuối cùng chuẩn MP4 (H264/AAC chạy mượt trên Web & Điện thoại)
             video_clip.write_videofile(
                 final_output_file.name, 
                 codec="libx264", 
                 audio_codec="aac", 
                 fps=fps_video,
-                logger=None # Tắt log của moviepy để terminal gọn gàng
+                logger=None
             )
             
             video_clip.close()
