@@ -6,6 +6,11 @@ AUDIO_DIR = os.path.join(BASE_DIR, "Warning_sound")
 MODEL_PATH = os.path.join(BASE_DIR, "best.onnx")
 BG_IMAGE_PATH = "background.jpg"
 
+# Tinh chỉnh lại thông số nhận diện
+CONFIDENCE_THRESHOLD = 0.60  # Tăng lên 60% để lọc bớt nhận diện nhầm
+COOLDOWN_SECONDS = 10
+FRAMES_TO_CONFIRM = 3  # Yêu cầu biển báo phải xuất hiện liên tục 3 frames mới phát âm thanh
+
 AUDIO_PATHS = {
     0: os.path.join(AUDIO_DIR, "102-cam-di-nguoc-chieu.mp3"),
     1: os.path.join(AUDIO_DIR, "103a-cam-oto.mp3"),
@@ -87,6 +92,3 @@ ENGLISH_SUBTITLES = {
     51: "One Way Traffic", 52: "Start of Populated Area", 53: "End of Populated Area", 
     54: "Pedestrian Crossing", 55: "Start of Expressway", 56: "End of Expressway", 57: "Market"
 }
-
-CONFIDENCE_THRESHOLD = 0.50  
-COOLDOWN_SECONDS = 10
