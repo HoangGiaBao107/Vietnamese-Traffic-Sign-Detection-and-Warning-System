@@ -37,7 +37,7 @@ def render_home():
     st.markdown(
         """
         <div class='sub-title' style='text-align: center; margin-bottom: 2rem;'>
-        Xử lý thời gian thực / Real-time processing with YOLOv11n
+        Xử lý thời gian thực / Real-time processing with YOLO11n
         </div>
         """,
         unsafe_allow_html=True
