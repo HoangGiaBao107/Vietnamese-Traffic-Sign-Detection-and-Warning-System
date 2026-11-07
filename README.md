@@ -172,7 +172,7 @@ The Streamlit interface provides:
 - Detection overlays and corresponding audio warnings.
 
 <p align="center">
-  <img src="web_interface.png" alt="Streamlit web interface" width="95%">
+  <img src="Homepage interface.png" alt="Streamlit web interface" width="95%">
 </p>
 
 **Live application:** [Open the Streamlit demo](https://vietnamese-traffic-sign-detection-and-warning-system-hgb.streamlit.app/)
